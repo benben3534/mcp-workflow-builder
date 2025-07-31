@@ -2,7 +2,7 @@
 
 /**
  * MCP Server for Automated Workflow Builder
- * Connects Claude to n8n, Airtable, OpenAI, and Telegram for automatic workflow creation
+ * Connects Claude to n8n, Airtable, and Telegram for automatic workflow creation
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -14,7 +14,6 @@ import {
   ErrorCode,
 } from '@modelcontextprotocol/sdk/types.js';
 import axios from 'axios';
-import OpenAI from 'openai';
 
 // Configuration interfaces
 interface N8nConfig {
@@ -25,10 +24,6 @@ interface N8nConfig {
 interface AirtableConfig {
   apiKey: string;
   baseId: string;
-}
-
-interface OpenAIConfig {
-  apiKey: string;
 }
 
 interface TelegramConfig {
@@ -47,9 +42,7 @@ class WorkflowBuilderMCP {
   private server: Server;
   private n8nConfig: N8nConfig;
   private airtableConfig: AirtableConfig;
-  private openaiConfig: OpenAIConfig;
   private telegramConfig: TelegramConfig;
-  private openai: OpenAI;
 
   constructor() {
     this.server = new Server({
@@ -68,17 +61,9 @@ class WorkflowBuilderMCP {
       baseId: process.env.AIRTABLE_BASE_ID || '',
     };
 
-    this.openaiConfig = {
-      apiKey: process.env.OPENAI_API_KEY || '',
-    };
-
     this.telegramConfig = {
       botToken: process.env.TELEGRAM_BOT_TOKEN || '',
     };
-
-    this.openai = new OpenAI({
-      apiKey: this.openaiConfig.apiKey,
-    });
 
     this.setupToolHandlers();
   }
@@ -155,30 +140,6 @@ class WorkflowBuilderMCP {
             },
           },
           {
-            name: 'generate_with_chatgpt',
-            description: 'Generate content or analyze text using ChatGPT',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                prompt: {
-                  type: 'string',
-                  description: 'The prompt to send to ChatGPT',
-                },
-                model: {
-                  type: 'string',
-                  description: 'GPT model to use (gpt-4, gpt-3.5-turbo)',
-                  default: 'gpt-3.5-turbo',
-                },
-                max_tokens: {
-                  type: 'number',
-                  description: 'Maximum tokens in response',
-                  default: 1000,
-                },
-              },
-              required: ['prompt'],
-            },
-          },
-          {
             name: 'send_telegram_message',
             description: 'Send a message via Telegram bot',
             inputSchema: {
@@ -215,24 +176,6 @@ class WorkflowBuilderMCP {
               },
             },
           },
-          {
-            name: 'improve_workflow_with_ai',
-            description: 'Use AI to improve and optimize workflow descriptions and logic',
-            inputSchema: {
-              type: 'object',
-              properties: {
-                workflow_description: {
-                  type: 'string',
-                  description: 'Current workflow description to improve',
-                },
-                goal: {
-                  type: 'string',
-                  description: 'What aspect to improve (efficiency, clarity, functionality, etc.)',
-                },
-              },
-              required: ['workflow_description'],
-            },
-          },
         ],
       };
     });
@@ -251,14 +194,10 @@ class WorkflowBuilderMCP {
             return await this.getN8nWorkflows(args as any);
           case 'analyze_workflow_requirements':
             return await this.analyzeWorkflowRequirements(args as any);
-          case 'generate_with_chatgpt':
-            return await this.generateWithChatGPT(args as any);
           case 'send_telegram_message':
             return await this.sendTelegramMessage(args as any);
           case 'get_telegram_updates':
             return await this.getTelegramUpdates(args as any);
-          case 'improve_workflow_with_ai':
-            return await this.improveWorkflowWithAI(args as any);
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -275,16 +214,13 @@ class WorkflowBuilderMCP {
     const { name, description, requirements = {} } = args;
 
     try {
-      // Use AI to enhance the workflow description
-      const enhancedDescription = await this.enhanceWorkflowDescription(description, requirements);
-      
-      // Analyze requirements and build workflow structure
-      const workflowStructure = await this.buildWorkflowStructure(enhancedDescription, requirements);
+      // Build workflow structure based on description
+      const workflowStructure = await this.buildWorkflowStructure(description, requirements);
 
       // Create workflow in n8n
       const workflow = await this.createN8nWorkflow({
         name,
-        description: enhancedDescription,
+        description,
         nodes: workflowStructure.nodes,
         connections: workflowStructure.connections,
       });
@@ -293,7 +229,7 @@ class WorkflowBuilderMCP {
         content: [
           {
             type: 'text',
-            text: `Workflow "${name}" created successfully!\n\nWorkflow ID: ${workflow.id}\nStatus: ${workflow.active ? 'Active' : 'Inactive'}\n\nEnhanced Description: ${enhancedDescription}\n\nStructure:\n${JSON.stringify(workflowStructure, null, 2)}`,
+            text: `Workflow "${name}" created successfully!\n\nWorkflow ID: ${workflow.id}\nStatus: ${workflow.active ? 'Active' : 'Inactive'}\n\nStructure:\n${JSON.stringify(workflowStructure, null, 2)}`,
           },
         ],
       };
@@ -306,30 +242,6 @@ class WorkflowBuilderMCP {
           },
         ],
       };
-    }
-  }
-
-  private async enhanceWorkflowDescription(description: string, requirements: any): Promise<string> {
-    try {
-      const completion = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert workflow automation consultant. Enhance workflow descriptions to be more detailed, specific, and actionable while keeping them concise. Focus on clear steps and integration points.',
-          },
-          {
-            role: 'user',
-            content: `Please enhance this workflow description to be more detailed and specific:\n\nOriginal: ${description}\n\nRequirements: ${JSON.stringify(requirements)}\n\nProvide only the enhanced description, no additional commentary.`,
-          },
-        ],
-        max_tokens: 500,
-      });
-
-      return completion.choices[0].message.content || description;
-    } catch (error) {
-      console.error('Error enhancing workflow description:', error);
-      return description; // Fall back to original description
     }
   }
 
@@ -372,39 +284,6 @@ class WorkflowBuilderMCP {
       };
     }
 
-    // Add ChatGPT node if AI processing is mentioned
-    if (description.toLowerCase().includes('ai') || description.toLowerCase().includes('gpt') || description.toLowerCase().includes('analyze') || description.toLowerCase().includes('generate')) {
-      const chatgptNode = {
-        id: `node_${nodeCounter++}`,
-        name: 'ChatGPT',
-        type: 'n8n-nodes-base.openAi',
-        typeVersion: 1,
-        position: [650, 300],
-        parameters: {
-          operation: 'chat',
-          model: 'gpt-3.5-turbo',
-          messages: {
-            values: [
-              {
-                role: 'user',
-                content: requirements.aiPrompt || 'Process the input data and provide insights.',
-              },
-            ],
-          },
-        },
-      };
-      nodes.push(chatgptNode);
-
-      // Connect to ChatGPT
-      if (nodes.length > 1) {
-        const lastNode = nodes[nodes.length - 2];
-        if (!connections[lastNode.name]) {
-          connections[lastNode.name] = { main: [] };
-        }
-        connections[lastNode.name].main.push([{ node: chatgptNode.name, type: 'main', index: 0 }]);
-      }
-    }
-
     // Add Telegram node if messaging is mentioned
     if (description.toLowerCase().includes('telegram') || description.toLowerCase().includes('message') || description.toLowerCase().includes('notify')) {
       const telegramNode = {
@@ -412,7 +291,7 @@ class WorkflowBuilderMCP {
         name: 'Telegram',
         type: 'n8n-nodes-base.telegram',
         typeVersion: 1,
-        position: [850, 300],
+        position: [650, 300],
         parameters: {
           operation: 'sendMessage',
           chatId: requirements.telegramChatId || '@channel',
@@ -437,7 +316,7 @@ class WorkflowBuilderMCP {
         name: 'Send Email',
         type: 'n8n-nodes-base.emailSend',
         typeVersion: 1,
-        position: [1050, 300],
+        position: [850, 300],
         parameters: {
           fromEmail: requirements.fromEmail || 'noreply@example.com',
           toEmail: requirements.toEmail || 'user@example.com',
@@ -476,7 +355,7 @@ class WorkflowBuilderMCP {
       },
       {
         headers: {
-          'X-N8N-API-KEY': this.n8nConfig.apiKey,  // FIXED: Changed from Authorization to X-N8N-API-KEY
+          'X-N8N-API-KEY': this.n8nConfig.apiKey,
           'Content-Type': 'application/json',
         },
       }
@@ -603,7 +482,7 @@ class WorkflowBuilderMCP {
 
       const response = await axios.get(url, {
         headers: {
-          'X-N8N-API-KEY': this.n8nConfig.apiKey,  // FIXED: Changed from Authorization to X-N8N-API-KEY
+          'X-N8N-API-KEY': this.n8nConfig.apiKey,
         },
       });
 
@@ -620,139 +499,27 @@ class WorkflowBuilderMCP {
     }
   }
 
-  private async generateWithChatGPT(args: any) {
-    const { prompt, model = 'gpt-3.5-turbo', max_tokens = 1000 } = args;
-
-    try {
-      const completion = await this.openai.chat.completions.create({
-        model: model,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: max_tokens,
-      });
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: completion.choices[0].message.content || 'No response from ChatGPT',
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error calling ChatGPT: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          },
-        ],
-      };
-    }
-  }
-
-  private async improveWorkflowWithAI(args: any) {
-    const { workflow_description, goal = 'improve efficiency and clarity' } = args;
-
-    try {
-      const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert workflow automation consultant specializing in n8n, Airtable, Telegram, and business process optimization. Provide specific, actionable improvements.',
-          },
-          {
-            role: 'user',
-            content: `Please analyze and improve this workflow description to ${goal}:\n\n${workflow_description}\n\nProvide:\n1. Improved workflow description\n2. Specific optimization suggestions\n3. Potential integration points (Airtable, Telegram, AI)\n4. Error handling recommendations`,
-          },
-        ],
-        max_tokens: 1500,
-      });
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: completion.choices[0].message.content || 'No improvements suggested',
-          },
-        ],
-      };
-    } catch (error) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error improving workflow: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          },
-        ],
-      };
-    }
-  }
-
   private async analyzeWorkflowRequirements(args: any) {
     const { requirements, context = {} } = args;
 
-    try {
-      const aiAnalysis = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a workflow analysis expert. Analyze the requirements and provide structured insights about triggers, actions, data flow, and integrations needed. Consider n8n, Airtable, Telegram, and AI capabilities.',
-          },
-          {
-            role: 'user',
-            content: `Analyze these workflow requirements:\n\n${requirements}\n\nContext: ${JSON.stringify(context)}\n\nProvide a JSON response with: triggers, actions, dataFlow, integrations, complexity, estimatedNodes, and recommendations.`,
-          },
-        ],
-        max_tokens: 800,
-      });
+    // Rule-based analysis without AI
+    const analysis = {
+      triggers: this.extractTriggers(requirements),
+      actions: this.extractActions(requirements),
+      dataFlow: this.extractDataFlow(requirements),
+      integrations: this.extractIntegrations(requirements),
+      conditions: this.extractConditions(requirements),
+      suggestedStructure: this.suggestWorkflowStructure(requirements, context),
+    };
 
-      let aiResult;
-      try {
-        aiResult = JSON.parse(aiAnalysis.choices[0].message.content || '{}');
-      } catch {
-        aiResult = { aiInsight: aiAnalysis.choices[0].message.content };
-      }
-
-      const analysis = {
-        triggers: this.extractTriggers(requirements),
-        actions: this.extractActions(requirements),
-        dataFlow: this.extractDataFlow(requirements),
-        integrations: this.extractIntegrations(requirements),
-        conditions: this.extractConditions(requirements),
-        suggestedStructure: this.suggestWorkflowStructure(requirements, context),
-        aiEnhanced: aiResult,
-      };
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Workflow Requirements Analysis:\n${JSON.stringify(analysis, null, 2)}`,
-          },
-        ],
-      };
-    } catch (error) {
-      const analysis = {
-        triggers: this.extractTriggers(requirements),
-        actions: this.extractActions(requirements),
-        dataFlow: this.extractDataFlow(requirements),
-        integrations: this.extractIntegrations(requirements),
-        conditions: this.extractConditions(requirements),
-        suggestedStructure: this.suggestWorkflowStructure(requirements, context),
-        error: `AI analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      };
-
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Workflow Requirements Analysis (Rule-based):\n${JSON.stringify(analysis, null, 2)}`,
-          },
-        ],
-      };
-    }
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Workflow Requirements Analysis:\n${JSON.stringify(analysis, null, 2)}`,
+        },
+      ],
+    };
   }
 
   private extractTriggers(requirements: string): string[] {
@@ -819,7 +586,6 @@ class WorkflowBuilderMCP {
     if (requirements.toLowerCase().includes('format')) transformations.push('format');
     if (requirements.toLowerCase().includes('convert')) transformations.push('convert');
     if (requirements.toLowerCase().includes('calculate')) transformations.push('calculate');
-    if (requirements.toLowerCase().includes('ai') || requirements.toLowerCase().includes('gpt')) transformations.push('ai-processing');
     if (requirements.toLowerCase().includes('analyze')) transformations.push('analyze');
     return transformations;
   }
@@ -841,7 +607,6 @@ class WorkflowBuilderMCP {
     if (requirements.toLowerCase().includes('google')) integrations.push('google');
     if (requirements.toLowerCase().includes('email')) integrations.push('email');
     if (requirements.toLowerCase().includes('telegram')) integrations.push('telegram');
-    if (requirements.toLowerCase().includes('ai') || requirements.toLowerCase().includes('gpt')) integrations.push('openai');
     return [...new Set(integrations)];
   }
 
@@ -879,7 +644,6 @@ class WorkflowBuilderMCP {
       'iteration',
       'complex logic',
       'multiple integrations',
-      'ai processing',
       'data transformation',
       'telegram bot',
       'real-time',
@@ -903,7 +667,6 @@ class WorkflowBuilderMCP {
     if (requirements.toLowerCase().includes('slack')) count++;
     if (requirements.toLowerCase().includes('telegram')) count++;
     if (requirements.toLowerCase().includes('webhook')) count++;
-    if (requirements.toLowerCase().includes('ai') || requirements.toLowerCase().includes('gpt')) count++;
     
     // Add for conditions
     const conditionCount = (requirements.match(/if\s+/gi) || []).length;
@@ -926,9 +689,6 @@ class WorkflowBuilderMCP {
     if (requirements.toLowerCase().includes('telegram')) {
       return 'telegram-bot-triggered';
     }
-    if (requirements.toLowerCase().includes('ai') || requirements.toLowerCase().includes('gpt')) {
-      return 'ai-enhanced-processing';
-    }
     return 'manual-triggered';
   }
 
@@ -946,9 +706,6 @@ class WorkflowBuilderMCP {
     }
     if (requirements.toLowerCase().includes('telegram')) {
       dependencies.push('telegram-bot-token');
-    }
-    if (requirements.toLowerCase().includes('ai') || requirements.toLowerCase().includes('gpt')) {
-      dependencies.push('openai-api-key');
     }
     
     return dependencies;
